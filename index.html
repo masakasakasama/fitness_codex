@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>fitness_codex</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:14px;line-height:1.4;max-width:860px}
+    h1,h2,h3{margin:8px 0}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    @media (max-width:700px){.grid{grid-template-columns:1fr}}
+    input,select,button{font-size:16px;padding:9px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    th,td{border-bottom:1px solid #ddd;padding:6px;text-align:left}
+    .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+  </style>
+</head>
+<body>
+  <h1>fitness_codex</h1>
+  <div class="row">
+    <input id="date" type="date" />
+    <select id="equipment"></select>
+    <select id="weight"></select>
+    <input id="reps" type="number" value="10" min="1" />
+    <input id="sets" type="number" value="3" min="1" />
+    <select id="effort"><option value="">きつさ(任意)</option><option value="easy">余裕</option><option value="normal">普通</option><option value="max">限界</option></select>
+    <button id="saveBtn">保存</button>
+    <button id="resetBtn">新規</button>
+  </div>
+  <div class="row">
+    <input id="newEquip" placeholder="機材を追加" />
+    <button id="addEquipBtn">機材追加</button>
+  </div>
+
+  <h2>履歴</h2>
+  <div class="row">
+    <select id="period"><option value="all">すべて</option><option value="week">今週</option><option value="month">今月</option></select>
+  </div>
+  <table>
+    <thead><tr><th>日付</th><th>機材</th><th>記録</th><th>きつさ</th><th>操作</th></tr></thead>
+    <tbody id="history"></tbody>
+  </table>
+
+  <h2>体重ログ</h2>
+  <div class="row">
+    <input id="bwDate" type="date" />
+    <input id="bw" type="number" step="0.1" placeholder="体重kg" />
+    <button id="saveBw">保存</button>
+  </div>
+  <div id="bwLatest"></div>
+
+  <h2>コーチ提案</h2>
+  <div id="coach"></div>
+
+<script>
+const KEY='fitness_codex_v2';
+const initialEquip=['チェストプレス','ショルダープレス','マルチプレス','ラットプルダウン','レッグプレス','アダクション/アブダクション','ダンベル','ケーブルマシン','トレッドミル','バイク'];
+const state=JSON.parse(localStorage.getItem(KEY)||'null')||{profile:{heightCm:183,currentWeightKg:66,targetWeightKg:70},equipments:initialEquip,entries:[],bodyLogs:[]};
+let editingId=null;
+
+const tokyoDate=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo'}).format(new Date());
+const save=()=>localStorage.setItem(KEY,JSON.stringify(state));
+const byId=(id)=>document.getElementById(id);
+const weights=()=>{const arr=[];for(let w=4;w<=14;w+=2)arr.push(w);for(let w=15;w<=120;w+=5)arr.push(w);return arr;};
+
+function init(){
+  byId('date').value=tokyoDate();
+  byId('bwDate').value=tokyoDate();
+  byId('weight').innerHTML=weights().map(w=>`<option value="${w}">${w}kg</option>`).join('');
+  renderEquip();renderHistory();renderBw();renderCoach();
+}
+function renderEquip(){byId('equipment').innerHTML=state.equipments.map(e=>`<option>${e}</option>`).join('');save();}
+function entryText(e){return `${e.weightKg}kg ${e.reps}回×${e.sets}セット`;}
+function filteredEntries(){
+  const p=byId('period').value;const t=new Date();
+  return state.entries.filter(e=>{const d=new Date(e.date+'T00:00:00');if(p==='all')return true;if(p==='week'){const s=new Date(t);s.setDate(t.getDate()-6);return d>=s;}if(p==='month')return d.getMonth()===t.getMonth()&&d.getFullYear()===t.getFullYear();});
+}
+function renderHistory(){
+  const rows=filteredEntries().sort((a,b)=>b.date.localeCompare(a.date));
+  byId('history').innerHTML=rows.map(e=>`<tr><td>${e.date}</td><td>${e.equipment}</td><td>${entryText(e)}</td><td>${e.effort||'-'}</td><td><button onclick="editEntry('${e.id}')">編集</button> <button onclick="delEntry('${e.id}')">削除</button></td></tr>`).join('');
+}
+function renderBw(){
+  const latest=state.bodyLogs.sort((a,b)=>b.date.localeCompare(a.date))[0];
+  if(!latest){byId('bwLatest').textContent='体重ログなし';return;}
+  const h=state.profile.heightCm/100;const bmi=(latest.weight/(h*h)).toFixed(1);
+  byId('bwLatest').textContent=`最新: ${latest.date} ${latest.weight}kg / BMI ${bmi} / 目標まで ${(state.profile.targetWeightKg-latest.weight).toFixed(1)}kg`;
+}
+function renderCoach(){
+  const seven=state.entries.filter(e=>new Date(e.date)>=new Date(Date.now()-7*86400000));
+  const recent=state.entries.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,4);
+  const maxStreak=recent.filter(e=>e.effort==='max').length;
+  const lines=[];
+  if(maxStreak>=2) lines.push('直近で限界が続いています。次回は同部位を軽め、または休息推奨。');
+  if(seven.length===0) lines.push('過去7日で記録がありません。次回は全身2-3機材を実施。');
+  const byEquip={}; state.entries.forEach(e=>{byEquip[e.equipment]=byEquip[e.equipment]||[];byEquip[e.equipment].push(e);});
+  Object.entries(byEquip).slice(0,5).forEach(([name,list])=>{const last=list.sort((a,b)=>b.date.localeCompare(a.date))[0];let next=`${last.weightKg}kg`;if(last.effort==='easy'&&last.reps>=10) next=`${last.weightKg+((last.weightKg<15)?2:5)}kg`; if(last.effort==='max'&&last.reps<8) next=`${Math.max(4,last.weightKg-((last.weightKg<=14)?2:5))}kg`; lines.push(`${name}: 次回目安 ${next} / 8-12回`);});
+  if(!lines.length) lines.push('提案生成に必要な記録がまだ不足。まず1回記録してください。');
+  byId('coach').innerHTML=lines.map(l=>`<div>${l}</div>`).join('');
+}
+
+window.editEntry=(id)=>{const e=state.entries.find(x=>x.id===id);if(!e)return;editingId=id;byId('date').value=e.date;byId('equipment').value=e.equipment;byId('weight').value=e.weightKg;byId('reps').value=e.reps;byId('sets').value=e.sets;byId('effort').value=e.effort||'';};
+window.delEntry=(id)=>{state.entries=state.entries.filter(e=>e.id!==id);save();renderHistory();renderCoach();};
+
+byId('addEquipBtn').onclick=()=>{const v=byId('newEquip').value.trim();if(!v)return;if(!state.equipments.includes(v))state.equipments.push(v);byId('newEquip').value='';renderEquip();};
+byId('saveBtn').onclick=()=>{const rec={id:editingId||crypto.randomUUID(),date:byId('date').value,equipment:byId('equipment').value,weightKg:Number(byId('weight').value),reps:Number(byId('reps').value),sets:Number(byId('sets').value),effort:byId('effort').value||'',updatedAt:new Date().toISOString()};if(editingId){state.entries=state.entries.map(e=>e.id===editingId?rec:e);}else state.entries.push(rec);editingId=null;save();renderHistory();renderCoach();};
+byId('resetBtn').onclick=()=>{editingId=null;byId('reps').value=10;byId('sets').value=3;byId('effort').value='';};
+byId('saveBw').onclick=()=>{state.bodyLogs.push({id:crypto.randomUUID(),date:byId('bwDate').value,weight:Number(byId('bw').value),updatedAt:new Date().toISOString()});save();renderBw();};
+byId('period').onchange=renderHistory;
+init();
+</script>
+</body></html>
